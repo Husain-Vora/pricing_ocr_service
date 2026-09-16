@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api import ocr, pricing, receipt
@@ -45,6 +46,26 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
                 "message": exc.message,
                 "request_id": get_request_id() or "-",
                 "details": exc.details,
+            }
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    # Pydantic/FastAPI schema-level rejections (wrong type, missing field,
+    # min_length, etc.) must use the same envelope as AppError — one
+    # error contract for every failure mode, not two.
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "Request failed schema validation.",
+                "request_id": get_request_id() or "-",
+                "details": {"errors": exc.errors()},
             }
         },
     )

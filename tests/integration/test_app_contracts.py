@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_s3_service
 from app.main import app
+from app.services.s3_service import UnimplementedS3Service
 
 client = TestClient(app)
 
@@ -48,10 +50,29 @@ def test_pricing_score_stub_returns_not_implemented_with_valid_key():
 
 
 def test_error_response_shape_matches_frozen_contract():
+    # This test checks only the HTTP-level error envelope shape, not real
+    # S3 behavior — that has its own coverage in test_s3_service.py. Swap
+    # in the stub so this test doesn't depend on AWS config being present.
+    app.dependency_overrides[get_s3_service] = lambda: UnimplementedS3Service()
+    try:
+        resp = client.post(
+            "/api/v1/ocr/extract",
+            json={"object_key": "org/1/x.pdf"},
+            headers={"X-API-Key": "dev-local-key"},
+        )
+        body = resp.json()
+        assert set(body["error"].keys()) == {"code", "message", "request_id", "details"}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_schema_validation_error_also_uses_frozen_envelope():
     resp = client.post(
         "/api/v1/ocr/extract",
-        json={"object_key": "org/1/x.pdf"},
+        json={"object_key": ""},
         headers={"X-API-Key": "dev-local-key"},
     )
+    assert resp.status_code == 422
     body = resp.json()
     assert set(body["error"].keys()) == {"code", "message", "request_id", "details"}
+    assert body["error"]["code"] == "VALIDATION_ERROR"
